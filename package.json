@@ -2,7 +2,10 @@
   "name": "agency-os",
   "version": "0.0.1",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
@@ -11,14 +14,24 @@
     "db:generate": "turbo run db:generate",
     "db:push": "turbo run db:push",
     "db:migrate": "turbo run db:migrate",
-    "db:studio": "cd packages/db && npx prisma studio"
+    "db:studio": "cd packages/db && npx prisma studio",
+    "test": "vitest run --config tests/vitest.config.ts",
+    "test:watch": "vitest --config tests/vitest.config.ts"
   },
   "devDependencies": {
+    "@types/node": "^22.10.2",
     "turbo": "^2.3.3",
-    "typescript": "^5.7.2",
-    "@types/node": "^22.10.2"
+    "typescript": "^5.7.2"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@types/supertest": "^7.2.0",
+    "@vitest/coverage-v8": "^4.1.0",
+    "jest-mock-extended": "^4.0.0",
+    "prisma-mock": "^1.1.0",
+    "supertest": "^7.2.2",
+    "vitest": "^4.1.0"
   }
 }
