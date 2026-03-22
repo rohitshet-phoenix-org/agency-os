@@ -17,6 +17,15 @@ export default function LoginPage() {
     try {
       const { data } = await api.post("/auth/login", form);
       localStorage.setItem("agency-os-token", data.token);
+      const org = data.user?.orgs?.[0];
+      localStorage.setItem("agency-os-user", JSON.stringify({
+        id: data.user?.id,
+        name: data.user?.name,
+        email: data.user?.email,
+        orgId: org?.organizationId ?? "",
+        orgName: org?.organization?.name ?? "Agency",
+        role: org?.role ?? "ADMIN",
+      }));
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.response?.data?.error ?? "Login failed");

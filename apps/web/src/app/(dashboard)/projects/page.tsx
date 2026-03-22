@@ -1,22 +1,57 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { STATUS_COLORS, formatDate } from "@/lib/utils";
-import { Plus, CheckSquare, Clock } from "lucide-react";
+import { Plus, CheckSquare, Clock, X, Briefcase } from "lucide-react";
+
+const STATUSES = ["ACTIVE", "PAUSED", "COMPLETED", "CANCELLED"];
 
 export default function ProjectsPage() {
-  const orgId = "demo-org";
+  const qc = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [form, setForm] = useState({ name: "", description: "", clientId: "", status: "ACTIVE", startDate: "", endDate: "" });
+
   const { data: projects = [], isLoading } = useQuery({
-    queryKey: ["projects", orgId],
-    queryFn: () => api.get(`/projects?orgId=${orgId}`).then((r) => r.data),
+    queryKey: ["projects"],
+    queryFn: () => api.get("/projects").then((r) => r.data),
   });
+
+  const { data: clients = [] } = useQuery({
+    queryKey: ["clients-list"],
+    queryFn: () => api.get("/clients").then((r) => r.data),
+  });
+
+  const createProject = useMutation({
+    mutationFn: (data: any) => api.post("/projects", data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["projects"] }); setShowModal(false); resetForm(); },
+  });
+
+  function resetForm() {
+    setForm({ name: "", description: "", clientId: "", status: "ACTIVE", startDate: "", endDate: "" });
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    createProject.mutate({
+      name: form.name,
+      description: form.description || undefined,
+      clientId: form.clientId || undefined,
+      status: form.status,
+      startDate: form.startDate || undefined,
+      endDate: form.endDate || undefined,
+    });
+  }
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-foreground">Projects</h2>
-        <button className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90">
+        <button
+          onClick={() => setShowModal(true)}
+          className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90"
+        >
           <Plus className="w-4 h-4" /> New Project
         </button>
       </div>
@@ -36,11 +71,9 @@ export default function ProjectsPage() {
                   {p.status}
                 </span>
               </div>
-
               {p.description && (
                 <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{p.description}</p>
               )}
-
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <div className="flex items-center gap-1">
                   <CheckSquare className="w-3.5 h-3.5" />
@@ -58,19 +91,79 @@ export default function ProjectsPage() {
           {projects.length === 0 && (
             <div className="col-span-3 text-center py-16 text-muted-foreground">
               <Briefcase className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p>No projects yet</p>
+              <p>No projects yet. Create your first one!</p>
             </div>
           )}
         </div>
       )}
-    </div>
-  );
-}
 
-function Briefcase({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 00.75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 00-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0112 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 01-.673-.38m0 0A2.18 2.18 0 013 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 013.413-.387m7.5 0V5.25A2.25 2.25 0 0013.5 3h-3a2.25 2.25 0 00-2.25 2.25v.894m7.5 0a48.667 48.667 0 00-7.5 0M12 12.75h.008v.008H12v-.008z" />
-    </svg>
+      {/* New Project Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h3 className="font-semibold text-foreground">New Project</h3>
+              <button onClick={() => { setShowModal(false); resetForm(); }} className="p-1 hover:bg-muted rounded-lg transition-colors">
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Project Name *</label>
+                <input required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  placeholder="e.g. SEO Campaign Q2 2026" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Description</label>
+                <textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                  rows={2} placeholder="Optional project description" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Client</label>
+                <select value={form.clientId} onChange={(e) => setForm((f) => ({ ...f, clientId: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="">No client</option>
+                  {clients.map((c: any) => <option key={c.id} value={c.id}>{c.company}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Status</label>
+                <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-foreground block mb-1.5">Start Date</label>
+                  <input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))}
+                    className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-foreground block mb-1.5">End Date</label>
+                  <input type="date" value={form.endDate} onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))}
+                    className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                </div>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => { setShowModal(false); resetForm(); }}
+                  className="flex-1 px-4 py-2 border border-border rounded-lg text-sm font-medium text-foreground hover:bg-muted transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={createProject.isPending}
+                  className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-60">
+                  {createProject.isPending ? "Creating..." : "Create Project"}
+                </button>
+              </div>
+              {createProject.isError && (
+                <p className="text-xs text-red-500">Failed to create project. Please try again.</p>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

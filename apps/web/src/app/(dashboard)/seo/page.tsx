@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { TrendingUp, TrendingDown, Minus, Search, Link, Shield, Plus } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Search, Link, Shield, Plus, X } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 const MOCK_RANKINGS = [
@@ -28,7 +28,19 @@ function PositionChange({ change }: { change: number }) {
 }
 
 export default function SeoPage() {
-  const orgId = "demo-org";
+  const qc = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [kwForm, setKwForm] = useState({ keyword: "", targetUrl: "", seoProjectId: "" });
+
+  const { data: seoProjects = [] } = useQuery({
+    queryKey: ["seo-projects"],
+    queryFn: () => api.get("/seo/projects").then((r) => r.data?.data ?? r.data ?? []),
+  });
+
+  const addKeyword = useMutation({
+    mutationFn: (data: any) => api.post(`/seo/projects/${data.seoProjectId}/keywords`, data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["seo-projects"] }); setShowModal(false); setKwForm({ keyword: "", targetUrl: "", seoProjectId: "" }); },
+  });
 
   return (
     <div className="space-y-5">
@@ -37,7 +49,7 @@ export default function SeoPage() {
           <h2 className="text-2xl font-bold text-foreground">SEO Tracking</h2>
           <p className="text-sm text-muted-foreground mt-0.5">Keyword rankings, backlinks, and site health</p>
         </div>
-        <button className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90">
+        <button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90">
           <Plus className="w-4 h-4" /> Add Keywords
         </button>
       </div>
@@ -125,6 +137,51 @@ export default function SeoPage() {
           </div>
         </div>
       </div>
+
+      {/* Add Keyword Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h3 className="font-semibold text-foreground">Add Keywords</h3>
+              <button onClick={() => setShowModal(false)} className="p-1 hover:bg-muted rounded-lg transition-colors">
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+            <form onSubmit={(e) => { e.preventDefault(); addKeyword.mutate(kwForm); }} className="p-6 space-y-4">
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">SEO Project *</label>
+                <select required value={kwForm.seoProjectId} onChange={(e) => setKwForm((f) => ({ ...f, seoProjectId: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="">Select project...</option>
+                  {seoProjects.map((p: any) => <option key={p.id} value={p.id}>{p.domain}</option>)}
+                </select>
+                {seoProjects.length === 0 && <p className="text-xs text-muted-foreground mt-1">No SEO projects yet.</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Keyword *</label>
+                <input required value={kwForm.keyword} onChange={(e) => setKwForm((f) => ({ ...f, keyword: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholder="digital marketing agency" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Target URL</label>
+                <input value={kwForm.targetUrl} onChange={(e) => setKwForm((f) => ({ ...f, targetUrl: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholder="https://yoursite.com/services" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowModal(false)}
+                  className="flex-1 px-4 py-2 border border-border rounded-lg text-sm font-medium text-foreground hover:bg-muted transition-colors">Cancel</button>
+                <button type="submit" disabled={addKeyword.isPending}
+                  className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-60">
+                  {addKeyword.isPending ? "Adding..." : "Add Keyword"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

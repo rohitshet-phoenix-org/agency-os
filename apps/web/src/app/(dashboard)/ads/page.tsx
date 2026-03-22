@@ -1,10 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { TrendingUp, DollarSign, MousePointer, ShoppingCart, Plus, RefreshCw } from "lucide-react";
+import { TrendingUp, DollarSign, MousePointer, ShoppingCart, Plus, RefreshCw, X } from "lucide-react";
 
 const MOCK_CAMPAIGNS = [
   { name: "Brand Awareness Q1", platform: "GOOGLE_ADS", status: "active", spend: 4200, impressions: 142000, clicks: 3840, conversions: 127, roas: 4.8 },
@@ -30,6 +31,20 @@ const PLATFORM_BADGE: Record<string, string> = {
 };
 
 export default function AdsPage() {
+  const qc = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [form, setForm] = useState({ platform: "GOOGLE_ADS", accountId: "", accountName: "", clientId: "" });
+
+  const { data: clients = [] } = useQuery({
+    queryKey: ["clients-list"],
+    queryFn: () => api.get("/clients").then((r) => r.data),
+  });
+
+  const connectAccount = useMutation({
+    mutationFn: (data: any) => api.post("/ads/accounts", data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["ads-accounts"] }); setShowModal(false); setForm({ platform: "GOOGLE_ADS", accountId: "", accountName: "", clientId: "" }); },
+  });
+
   const totalSpend = MOCK_CAMPAIGNS.reduce((s, c) => s + c.spend, 0);
   const totalConversions = MOCK_CAMPAIGNS.reduce((s, c) => s + c.conversions, 0);
   const avgRoas = (MOCK_CAMPAIGNS.reduce((s, c) => s + c.roas, 0) / MOCK_CAMPAIGNS.length).toFixed(1);
@@ -46,7 +61,7 @@ export default function AdsPage() {
           <button className="flex items-center gap-2 px-3 py-1.5 border border-border text-sm rounded-lg hover:bg-muted transition-colors">
             <RefreshCw className="w-3.5 h-3.5" /> Sync All
           </button>
-          <button className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90">
+          <button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90">
             <Plus className="w-4 h-4" /> Connect Account
           </button>
         </div>
@@ -145,6 +160,57 @@ export default function AdsPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Connect Ad Account Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h3 className="font-semibold text-foreground">Connect Ad Account</h3>
+              <button onClick={() => setShowModal(false)} className="p-1 hover:bg-muted rounded-lg transition-colors">
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+            <form onSubmit={(e) => { e.preventDefault(); connectAccount.mutate(form); }} className="p-6 space-y-4">
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Platform *</label>
+                <select required value={form.platform} onChange={(e) => setForm((f) => ({ ...f, platform: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  {["GOOGLE_ADS", "META_ADS", "TIKTOK_ADS", "LINKEDIN_ADS", "TWITTER_ADS"].map((p) => <option key={p} value={p}>{p.replace("_", " ")}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Account ID *</label>
+                <input required value={form.accountId} onChange={(e) => setForm((f) => ({ ...f, accountId: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholder="e.g. 123-456-7890" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Account Name *</label>
+                <input required value={form.accountName} onChange={(e) => setForm((f) => ({ ...f, accountName: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholder="Acme Google Ads" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1.5">Client</label>
+                <select value={form.clientId} onChange={(e) => setForm((f) => ({ ...f, clientId: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="">Select client...</option>
+                  {clients.map((c: any) => <option key={c.id} value={c.id}>{c.company}</option>)}
+                </select>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowModal(false)}
+                  className="flex-1 px-4 py-2 border border-border rounded-lg text-sm font-medium text-foreground hover:bg-muted transition-colors">Cancel</button>
+                <button type="submit" disabled={connectAccount.isPending}
+                  className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-60">
+                  {connectAccount.isPending ? "Connecting..." : "Connect"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

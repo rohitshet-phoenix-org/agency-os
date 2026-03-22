@@ -4,6 +4,10 @@ const connection = {
   host: process.env["REDIS_HOST"] ?? "localhost",
   port: Number(process.env["REDIS_PORT"] ?? 6379),
   password: process.env["REDIS_PASSWORD"],
+  lazyConnect: true,
+  enableOfflineQueue: false,
+  maxRetriesPerRequest: null,
+  retryStrategy: () => null, // don't retry — Redis is optional in dev
 };
 
 const defaultJobOptions = {

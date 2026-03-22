@@ -13,7 +13,6 @@ export async function adsRoutes(app: FastifyInstance) {
     return prisma.adAccount.findMany({
       where,
       include: { _count: { select: { campaigns: true } } },
-      select: { id: true, platform: true, accountId: true, accountName: true, currency: true, isActive: true, _count: true },
     });
   });
 
