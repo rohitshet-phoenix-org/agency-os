@@ -32,6 +32,7 @@ import { billingRoutes } from "./routes/billing.js";
 import { approvalsRoutes } from "./routes/approvals.js";
 import { notificationsRoutes } from "./routes/notifications.js";
 import { webhooksRoutes } from "./routes/webhooks.js";
+import { integrationsRoutes } from "./routes/integrations.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -102,6 +103,7 @@ export async function buildApp() {
   await app.register(approvalsRoutes,     { prefix: `${API}/approvals` });
   await app.register(notificationsRoutes, { prefix: `${API}/notifications` });
   await app.register(webhooksRoutes,      { prefix: `${API}/webhooks` });
+  await app.register(integrationsRoutes,  { prefix: `${API}/integrations` });
 
   return app;
 }

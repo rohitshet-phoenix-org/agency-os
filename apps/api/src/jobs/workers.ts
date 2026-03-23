@@ -1,5 +1,10 @@
 import { Worker } from "bullmq";
 import { prisma } from "@agency-os/db";
+import { getIntegration } from "../services/integrations.js";
+import { createResendClient, sendBulkCampaign } from "../services/resend-email.js";
+import { createGSCClient, getKeywordPositions } from "../services/google-search-console.js";
+import { listCampaigns as listGoogleCampaigns, getDailyMetrics as getGoogleDailyMetrics } from "../services/google-ads.js";
+import { listCampaigns as listMetaCampaigns, getAccountInsights as getMetaInsights } from "../services/meta-ads.js";
 
 const connection = {
   host: process.env["REDIS_HOST"] ?? "localhost",
@@ -14,7 +19,6 @@ const reportWorker = new Worker(
     if (job.name === "generate-report") {
       const { clientId, period, startDate, endDate, orgId, templateId } = job.data;
 
-      // Gather metrics from all integrations
       const integrations = await prisma.analyticsIntegration.findMany({ where: { clientId, isActive: true } });
       const integrationIds = integrations.map((i) => i.id);
 
@@ -67,8 +71,7 @@ const socialWorker = new Worker(
       if (!post) return;
 
       try {
-        // In production: call platform API (Meta, Twitter, LinkedIn, etc.)
-        // For now, mark as published
+        // In production: call platform API (Meta Graph, Twitter v2, LinkedIn, etc.)
         await prisma.socialPost.update({
           where: { id: postId },
           data: { status: "PUBLISHED", publishedAt: new Date() },
@@ -85,7 +88,7 @@ const socialWorker = new Worker(
   { connection, concurrency: 10 }
 );
 
-// ── Email Worker ──────────────────────────────────────────────────────
+// ── Email Worker — sends via Resend ───────────────────────────────────
 const emailWorker = new Worker(
   "email",
   async (job) => {
@@ -100,24 +103,44 @@ const emailWorker = new Worker(
       });
       if (!campaign) return;
 
-      let subscribers = campaign.list.subscribers;
-      // Apply segment filters if present (simplified)
-      if (campaign.segmentId && campaign.segment) {
-        // In production: evaluate segment rules against subscriber metadata
-      }
-
+      const subscribers = campaign.list.subscribers;
       let sent = 0;
-      for (const sub of subscribers) {
-        try {
-          // In production: send via Resend/Nodemailer
+
+      // ── Try Resend first ────────────────────────────────────────────
+      const resendInt = await getIntegration(campaign.organizationId, "resend");
+      if (resendInt && campaign.htmlBody) {
+        const resend = createResendClient(resendInt.credentials["apiKey"]!);
+        const fromEmail = resendInt.credentials["fromEmail"] ?? `campaigns@${resendInt.credentials["domain"] ?? "youragency.com"}`;
+
+        const result = await sendBulkCampaign(resend, {
+          from: `${resendInt.credentials["fromName"] ?? "Agency OS"} <${fromEmail}>`,
+          subject: campaign.subject,
+          htmlBody: campaign.htmlBody,
+          previewText: campaign.previewText ?? undefined,
+          recipients: subscribers.map((s) => ({ email: s.email, name: s.firstName ?? undefined })),
+          campaignId,
+        });
+        sent = result.sent;
+
+        // Record sends
+        for (const sub of subscribers) {
           await prisma.emailSend.upsert({
             where: { campaignId_subscriberId: { campaignId, subscriberId: sub.id } },
             create: { campaignId, subscriberId: sub.id, sentAt: new Date() },
             update: { sentAt: new Date() },
-          });
-          sent++;
-        } catch {
-          // continue on individual failure
+          }).catch(() => {});
+        }
+      } else {
+        // Fallback: record without sending (no Resend configured)
+        for (const sub of subscribers) {
+          try {
+            await prisma.emailSend.upsert({
+              where: { campaignId_subscriberId: { campaignId, subscriberId: sub.id } },
+              create: { campaignId, subscriberId: sub.id, sentAt: new Date() },
+              update: { sentAt: new Date() },
+            });
+            sent++;
+          } catch {}
         }
       }
 
@@ -130,19 +153,69 @@ const emailWorker = new Worker(
   { connection, concurrency: 5 }
 );
 
-// ── SEO Worker ────────────────────────────────────────────────────────
+// ── SEO Worker — syncs rankings via Google Search Console ─────────────
 const seoWorker = new Worker(
   "seo",
   async (job) => {
     if (job.name === "check-rankings") {
       const { seoProjectId } = job.data;
-      const keywords = await prisma.seoKeyword.findMany({ where: { seoProjectId } });
+      const project = await prisma.seoProject.findUnique({ where: { id: seoProjectId } });
+      if (!project) return;
 
-      // In production: call Google Search Console or DataForSEO API
+      const keywords = await prisma.seoKeyword.findMany({ where: { seoProjectId } });
+      const today = new Date(new Date().toDateString());
+      const startDate = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const endDate = today.toISOString().slice(0, 10);
+
+      // ── Try Google Search Console ───────────────────────────────────
+      const gscInt = await getIntegration(project.organizationId, "google_search_console");
+      if (gscInt && project.domain && keywords.length > 0) {
+        try {
+          const gsc = createGSCClient({
+            clientEmail: gscInt.credentials["clientEmail"]!,
+            privateKey: gscInt.credentials["privateKey"]!,
+          });
+          const siteUrl = gscInt.credentials["siteUrl"] ?? `https://${project.domain}`;
+          const positions = await getKeywordPositions(
+            gsc,
+            siteUrl,
+            keywords.map((k) => k.keyword),
+            startDate,
+            endDate
+          );
+
+          for (const pos of positions) {
+            const kw = keywords.find((k) => k.keyword.toLowerCase() === pos.keyword.toLowerCase());
+            if (!kw) continue;
+            await prisma.keywordRanking.upsert({
+              where: { keywordId_date: { keywordId: kw.id, date: today } },
+              create: {
+                keywordId: kw.id,
+                date: today,
+                position: pos.position !== null ? Math.round(pos.position) : null,
+                clicks: pos.clicks,
+                impressions: pos.impressions,
+                ctr: pos.ctr,
+              },
+              update: {
+                position: pos.position !== null ? Math.round(pos.position) : null,
+                clicks: pos.clicks,
+                impressions: pos.impressions,
+                ctr: pos.ctr,
+              },
+            });
+          }
+          return;
+        } catch (err) {
+          console.error("GSC sync failed:", err);
+        }
+      }
+
+      // Fallback: upsert with null position (no GSC configured)
       for (const kw of keywords) {
         await prisma.keywordRanking.upsert({
-          where: { keywordId_date: { keywordId: kw.id, date: new Date(new Date().toDateString()) } },
-          create: { keywordId: kw.id, date: new Date(new Date().toDateString()), position: null },
+          where: { keywordId_date: { keywordId: kw.id, date: today } },
+          create: { keywordId: kw.id, date: today, position: null },
           update: {},
         });
       }
@@ -150,21 +223,15 @@ const seoWorker = new Worker(
 
     if (job.name === "run-audit") {
       const { seoProjectId } = job.data;
-      // In production: run technical SEO audit
       await prisma.seoAudit.create({
-        data: {
-          seoProjectId,
-          score: 0,
-          issues: [],
-          pagesScanned: 0,
-        },
+        data: { seoProjectId, score: 0, issues: [], pagesScanned: 0 },
       });
     }
   },
   { connection, concurrency: 3 }
 );
 
-// ── Ad Sync Worker ────────────────────────────────────────────────────
+// ── Ad Sync Worker — syncs from Google Ads + Meta Ads ─────────────────
 const adSyncWorker = new Worker(
   "ad-sync",
   async (job) => {
@@ -173,9 +240,112 @@ const adSyncWorker = new Worker(
       const account = await prisma.adAccount.findUnique({ where: { id: adAccountId } });
       if (!account) return;
 
-      // In production: call Google Ads API / Meta Marketing API
-      // Upsert campaigns and metrics
-      console.log(`Syncing ad account ${account.accountName} (${account.platform})`);
+      const orgId = account.organizationId;
+
+      if (account.platform === "GOOGLE") {
+        const googleInt = await getIntegration(orgId, "google_ads");
+        if (!googleInt) {
+          console.log(`Google Ads: no credentials for org ${orgId}`);
+          return;
+        }
+        const creds = {
+          developerToken: googleInt.credentials["developerToken"]!,
+          clientId: googleInt.credentials["clientId"]!,
+          clientSecret: googleInt.credentials["clientSecret"]!,
+          refreshToken: googleInt.credentials["refreshToken"]!,
+          managerCustomerId: googleInt.credentials["managerCustomerId"],
+        };
+
+        try {
+          const campaigns = await listGoogleCampaigns(creds, account.accountId);
+          for (const c of campaigns) {
+            const existing = await prisma.adCampaign.findFirst({
+              where: { adAccountId, externalId: String(c.id) },
+            });
+            const campaignData = {
+              name: c.name,
+              status: c.status === "ENABLED" ? "ACTIVE" : "PAUSED",
+              budget: 0,
+              externalId: String(c.id),
+            };
+            if (existing) {
+              await prisma.adCampaign.update({ where: { id: existing.id }, data: campaignData });
+            } else {
+              await prisma.adCampaign.create({ data: { ...campaignData, adAccountId } as any });
+            }
+          }
+
+          // Store daily metrics as MetricSnapshots
+          const daily = await getGoogleDailyMetrics(creds, account.accountId, 7);
+          for (const d of daily) {
+            const integration = await prisma.analyticsIntegration.findFirst({
+              where: { clientId: account.clientId ?? "" },
+            });
+            if (!integration) continue;
+            for (const [metric, value] of Object.entries({
+              spend: d.spend,
+              impressions: d.impressions,
+              clicks: d.clicks,
+              conversions: d.conversions,
+            })) {
+              await prisma.metricSnapshot.upsert({
+                where: { integrationId_metric_date: { integrationId: integration.id, metric, date: new Date(d.date) } },
+                create: { integrationId: integration.id, metric, value: Number(value), date: new Date(d.date) },
+                update: { value: Number(value) },
+              });
+            }
+          }
+        } catch (err) {
+          console.error("Google Ads sync error:", err);
+        }
+      }
+
+      if (account.platform === "META") {
+        const metaInt = await getIntegration(orgId, "meta_ads");
+        if (!metaInt) {
+          console.log(`Meta Ads: no credentials for org ${orgId}`);
+          return;
+        }
+        const creds = {
+          accessToken: metaInt.credentials["accessToken"]!,
+          adAccountId: account.accountId,
+        };
+
+        try {
+          const campaigns = await listMetaCampaigns(creds);
+          for (const c of campaigns) {
+            const existing = await prisma.adCampaign.findFirst({
+              where: { adAccountId, externalId: c.id },
+            });
+            const campaignData = {
+              name: c.name,
+              status: c.status === "ACTIVE" ? "ACTIVE" : "PAUSED",
+              budget: 0,
+              externalId: c.id,
+            };
+            if (existing) {
+              await prisma.adCampaign.update({ where: { id: existing.id }, data: campaignData });
+            } else {
+              await prisma.adCampaign.create({ data: { ...campaignData, adAccountId } as any });
+            }
+          }
+
+          const insights = await getMetaInsights(creds);
+          await prisma.adMetric.create({
+            data: {
+              adAccountId,
+              date: new Date(),
+              impressions: insights.impressions,
+              clicks: insights.clicks,
+              spend: insights.spend,
+              conversions: insights.conversions,
+              roas: insights.roas,
+            } as any,
+          });
+        } catch (err) {
+          console.error("Meta Ads sync error:", err);
+        }
+      }
     }
   },
   { connection, concurrency: 5 }

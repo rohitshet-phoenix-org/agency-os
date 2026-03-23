@@ -1,6 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "@agency-os/db";
 import { nanoid } from "nanoid";
+import { getIntegration } from "../services/integrations.js";
+import {
+  createStripeClient,
+  getOrCreateCustomer,
+  createStripeInvoice,
+  finalizeAndSendStripeInvoice,
+  createPaymentLink,
+} from "../services/stripe.js";
 
 export async function billingRoutes(app: FastifyInstance) {
   const auth = { preHandler: [app.authenticate] };
@@ -37,6 +45,7 @@ export async function billingRoutes(app: FastifyInstance) {
     const subtotal = lineItems.reduce((sum: number, i: any) => sum + i.quantity * i.unitPrice, 0);
     const tax = body.tax ?? 0;
     const total = subtotal + tax;
+    const currency = body.currency ?? "USD";
     const number = `INV-${Date.now().toString(36).toUpperCase()}`;
 
     const invoice = await prisma.invoice.create({
@@ -44,7 +53,7 @@ export async function billingRoutes(app: FastifyInstance) {
         organizationId: body.orgId,
         clientId: body.clientId,
         number,
-        currency: body.currency ?? "USD",
+        currency,
         subtotal,
         tax,
         total,
@@ -53,8 +62,33 @@ export async function billingRoutes(app: FastifyInstance) {
         status: "DRAFT",
         lineItems: { createMany: { data: lineItems.map((i: any) => ({ description: i.description, quantity: i.quantity, unitPrice: i.unitPrice, total: i.quantity * i.unitPrice })) } },
       },
-      include: { lineItems: true },
+      include: { lineItems: true, client: true },
     });
+
+    // ── Stripe: create invoice mirror if connected ────────────────────────
+    try {
+      const stripeInt = await getIntegration(body.orgId, "stripe");
+      if (stripeInt && (invoice as any).client) {
+        const client = (invoice as any).client as { name: string; email: string };
+        const stripe = createStripeClient(stripeInt.credentials["secretKey"]!);
+        const customer = await getOrCreateCustomer(stripe, client.email, client.name, {
+          agencyOsClientId: invoice.clientId ?? "",
+        });
+        await createStripeInvoice(
+          stripe,
+          customer.id,
+          lineItems.map((i: any) => ({
+            description: i.description,
+            amount: i.quantity * i.unitPrice,
+            currency,
+          })),
+          new Date(body.dueDate)
+        );
+      }
+    } catch {
+      // Stripe sync is best-effort; don't fail the local invoice creation
+    }
+
     return reply.code(201).send(invoice);
   });
 
@@ -68,9 +102,42 @@ export async function billingRoutes(app: FastifyInstance) {
   // POST /api/v1/billing/invoices/:id/send
   app.post("/invoices/:id/send", auth, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const { orgId } = req.body as { orgId?: string };
+
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      include: { client: true },
+    });
+    if (!invoice) return reply.code(404).send({ error: "Invoice not found" });
+
     await prisma.invoice.update({ where: { id }, data: { status: "SENT" } });
-    // TODO: trigger email via queue
-    return reply.code(202).send({ status: "sent" });
+
+    let paymentUrl: string | null = null;
+
+    // ── Stripe: finalize & send via Stripe if connected ──────────────────
+    if (orgId) {
+      try {
+        const stripeInt = await getIntegration(orgId, "stripe");
+        if (stripeInt && invoice.client) {
+          const stripe = createStripeClient(stripeInt.credentials["secretKey"]!);
+          const customer = await getOrCreateCustomer(
+            stripe,
+            invoice.client.email,
+            invoice.client.name
+          );
+          const stripeInvoices = await stripe.invoices.list({ customer: customer.id, limit: 10 });
+          const matching = stripeInvoices.data.find((si) => si.status === "draft");
+          if (matching) {
+            const sent = await finalizeAndSendStripeInvoice(stripe, matching.id);
+            paymentUrl = await createPaymentLink(stripe, sent.id);
+          }
+        }
+      } catch {
+        // best-effort
+      }
+    }
+
+    return reply.code(202).send({ status: "sent", paymentUrl });
   });
 
   // POST /api/v1/billing/invoices/:id/payments

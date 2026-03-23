@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { Building2, User, Bell, Shield, Key, Save } from "lucide-react";
+import { Building2, User, Bell, Shield, Key, Save, Zap } from "lucide-react";
 
 type Tab = "profile" | "organization" | "notifications" | "security" | "api";
 
@@ -86,6 +87,13 @@ export default function SettingsPage() {
               {label}
             </button>
           ))}
+          <Link
+            href="/settings/integrations"
+            className="flex items-center gap-3 w-full px-3 py-2 text-sm rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          >
+            <Zap className="w-4 h-4 shrink-0" />
+            Integrations
+          </Link>
         </nav>
 
         {/* Content */}
