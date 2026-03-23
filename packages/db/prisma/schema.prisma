@@ -28,6 +28,15 @@ model Organization {
   users           OrganizationUser[]
   clients         Client[]
   leads           Lead[]
+  contacts        Contact[]
+  accounts        Account[]
+  deals           Deal[]
+  meetings        Meeting[]
+  callLogs        CallLog[]
+  products        Product[]
+  quotes          Quote[]
+  cases           Case[]
+  crmDocuments    CrmDocument[]
   projects        Project[]
   invoices        Invoice[]
   socialAccounts  SocialAccount[]
@@ -949,6 +958,274 @@ model Webhook {
   events         String   @default("[]")
   secret         String
   isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────
+// CRM PHASE 1: CONTACTS, ACCOUNTS, DEALS
+// ─────────────────────────────────────────
+
+model Contact {
+  id             String   @id @default(cuid())
+  organizationId String
+  accountId      String?
+  leadId         String?
+  firstName      String
+  lastName       String
+  email          String
+  phone          String?
+  title          String?
+  department     String?
+  source         String   @default("OTHER")
+  assignedToId   String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account      Account?          @relation(fields: [accountId], references: [id])
+  deals        DealContact[]
+  meetings     MeetingContact[]
+  calls        CallLog[]
+  quotes       Quote[]
+  activities   ContactActivity[]
+}
+
+model ContactActivity {
+  id        String   @id @default(cuid())
+  contactId String
+  type      String
+  title     String
+  body      String?
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  website        String?
+  industry       String?
+  phone          String?
+  billingAddress String?
+  employees      Int?
+  revenue        Float?
+  assignedToId   String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts     Contact[]
+  deals        Deal[]
+}
+
+model Deal {
+  id                String    @id @default(cuid())
+  organizationId    String
+  accountId         String?
+  name              String
+  value             Float?
+  stage             String    @default("PROSPECTING")
+  probability       Int       @default(10)
+  expectedCloseDate DateTime?
+  actualCloseDate   DateTime?
+  source            String    @default("OTHER")
+  assignedToId      String?
+  notes             String?
+  lostReason        String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account      Account?      @relation(fields: [accountId], references: [id])
+  contacts     DealContact[]
+  activities   DealActivity[]
+  quotes       Quote[]
+}
+
+model DealContact {
+  dealId    String
+  contactId String
+  role      String?
+
+  deal    Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([dealId, contactId])
+}
+
+model DealActivity {
+  id        String   @id @default(cuid())
+  dealId    String
+  type      String
+  title     String
+  body      String?
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────
+// CRM PHASE 1: ACTIVITIES (MEETINGS, CALLS)
+// ─────────────────────────────────────────
+
+model Meeting {
+  id             String    @id @default(cuid())
+  organizationId String
+  title          String
+  description    String?
+  location       String?
+  startAt        DateTime
+  endAt          DateTime?
+  status         String    @default("SCHEDULED")
+  leadId         String?
+  dealId         String?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts     MeetingContact[]
+}
+
+model MeetingContact {
+  meetingId String
+  contactId String
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([meetingId, contactId])
+}
+
+model CallLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  contactId      String?
+  leadId         String?
+  dealId         String?
+  direction      String   @default("OUTBOUND")
+  duration       Int?
+  outcome        String   @default("CONNECTED")
+  notes          String?
+  calledAt       DateTime @default(now())
+  createdBy      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact      Contact?     @relation(fields: [contactId], references: [id])
+}
+
+// ─────────────────────────────────────────
+// CRM PHASE 2: PRODUCTS & QUOTES
+// ─────────────────────────────────────────
+
+model Product {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  category       String?
+  unitPrice      Float    @default(0)
+  currency       String   @default("USD")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quoteItems   QuoteItem[]
+}
+
+model Quote {
+  id             String    @id @default(cuid())
+  organizationId String
+  dealId         String?
+  contactId      String?
+  number         String    @unique
+  title          String
+  status         String    @default("DRAFT")
+  validUntil     DateTime?
+  notes          String?
+  subtotal       Float     @default(0)
+  tax            Float     @default(0)
+  total          Float     @default(0)
+  currency       String    @default("USD")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deal         Deal?        @relation(fields: [dealId], references: [id])
+  contact      Contact?     @relation(fields: [contactId], references: [id])
+  items        QuoteItem[]
+}
+
+model QuoteItem {
+  id          String  @id @default(cuid())
+  quoteId     String
+  productId   String?
+  description String
+  quantity    Float   @default(1)
+  unitPrice   Float   @default(0)
+  total       Float   @default(0)
+
+  quote   Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+}
+
+// ─────────────────────────────────────────
+// CRM PHASE 3: SUPPORT (CASES, DOCUMENTS)
+// ─────────────────────────────────────────
+
+model Case {
+  id             String    @id @default(cuid())
+  organizationId String
+  contactId      String?
+  accountId      String?
+  subject        String
+  description    String?
+  status         String    @default("OPEN")
+  priority       String    @default("MEDIUM")
+  category       String?
+  resolution     String?
+  resolvedAt     DateTime?
+  assignedToId   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  comments     CaseComment[]
+}
+
+model CaseComment {
+  id         String   @id @default(cuid())
+  caseId     String
+  body       String
+  createdBy  String?
+  isInternal Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+}
+
+model CrmDocument {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  fileType       String?
+  url            String
+  sizeBytes      Int?
+  leadId         String?
+  contactId      String?
+  dealId         String?
+  accountId      String?
+  uploadedBy     String?
   createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
