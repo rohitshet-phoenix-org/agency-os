@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -13,6 +14,7 @@ import {
   Megaphone,
   Mail,
   Globe,
+  ArrowLeft,
 } from "lucide-react";
 import { getOrgId } from "@/lib/auth";
 
@@ -375,17 +377,26 @@ export default function IntegrationsPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Integrations</h1>
-          <p className="text-gray-500 mt-1">
-            Connect your tools to power CRM, SEO, Ads, and Billing with real data.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 rounded-full text-sm text-green-700">
-          <CheckCircle2 className="w-4 h-4" />
-          {connected} of {CONNECTORS.length} connected
+      {/* Back + Header */}
+      <div>
+        <Link
+          href="/settings"
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 mb-4"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Settings
+        </Link>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Integrations</h1>
+            <p className="text-gray-500 mt-1">
+              Connect your tools to power CRM, SEO, Ads, and Billing with real data.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 rounded-full text-sm text-green-700">
+            <CheckCircle2 className="w-4 h-4" />
+            {connected} of {CONNECTORS.length} connected
+          </div>
         </div>
       </div>
 
